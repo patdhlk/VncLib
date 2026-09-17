@@ -4,7 +4,6 @@
 
 using System;
 using System.IO;
-using System.Windows.Media.Imaging;
 
 namespace VncLib
 {
@@ -92,18 +91,5 @@ namespace VncLib
             return res;
         }
 
-        public static void CreateThumbnail(string filename, BitmapSource image5)
-        {
-            if (filename != string.Empty)
-            {
-                using (var stream5 = new FileStream(filename, FileMode.Create))
-                {
-                    var encoder5 = new PngBitmapEncoder();
-                    encoder5.Frames.Add(BitmapFrame.Create(image5));
-                    encoder5.Save(stream5);
-                    stream5.Close();
-                }
-            }
-        }
     }
 }

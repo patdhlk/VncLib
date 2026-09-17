@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <Product>VncLib.Avalonia</Product>
+    <PackageId>VncLib.Avalonia</PackageId>
+    <Title>VncLib.Avalonia</Title>
+    <Description>Cross-platform Avalonia 12 control for VncLib — renders a remote VNC screen and forwards keyboard/pointer input. Runs on Windows, Linux and macOS. Depends on the UI-neutral VncLib core.</Description>
+    <PackageTags>vnc;rfb;remote-desktop;avalonia;control;cross-platform</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VncLib\VncLib.csproj" />
+  </ItemGroup>
+
+</Project>

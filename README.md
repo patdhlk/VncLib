@@ -8,16 +8,33 @@ These instructions will get you a copy of the project up and running on your loc
 
 ### Prerequisites
 
-* .NET Framework 4.8
-* .NET 7.0
+* .NET 8, 9, or 10 (for VncLib core and VncLib.Avalonia)
+* .NET Framework 4.8 is also supported by VncLib core and VncLib.Wpf
 
 ### Installing
 
-Download the latest release, see the [Releases](https://github.com/patdhlk/vnclib/releases) and add a reference in your .NET application or build it yourself using dotnet.
+VncLib is available as NuGet packages:
 
-Then you can use it in your ViewModel or somewhere you want to display the remote desktop.
+```bash
+# Core library (UI-neutral, netstandard2.0 + net8.0/9.0/10.0)
+dotnet add package VncLib
 
-See the VncLib.Client project for usage information
+# WPF control (net48 + net8.0/9.0/10.0-windows)
+dotnet add package VncLib.Wpf
+
+# Avalonia control (cross-platform, net8.0/9.0/10.0)
+dotnet add package VncLib.Avalonia
+```
+
+### Packages
+
+**VncLib** — The core UI-neutral library implementing the VNC Remote Framebuffer (RFB) Protocol. Provides raw BGR32 framebuffer data via `VncConnection.GetFramebuffer()` and the `FrameArrived` event, and input methods via `RfbClient.SendKey(VncKey, bool)` and `SendMouseClick(...)`. Targets netstandard2.0, net8.0, net9.0, and net10.0.
+
+**VncLib.Wpf** — WPF control (`VncLibControl`) for Windows applications. Targets net48, net8.0-windows, net9.0-windows, and net10.0-windows.
+
+**VncLib.Avalonia** — Cross-platform Avalonia 12 control (`VncControl`) supporting Windows, Linux, and macOS. Targets net8.0, net9.0, and net10.0.
+
+See the VncLib.Client project for WPF usage examples.
 
 ## Built With
 

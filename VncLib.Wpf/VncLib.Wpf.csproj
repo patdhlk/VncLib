@@ -1,20 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
-    <TargetFrameworks>net7.0-windows;net48</TargetFrameworks>
-    <Company>VncLib</Company>
-    <Product>VncLib.Wpf</Product>
-    <Copyright>Copyright 2018 The VncLib Authors</Copyright>
+    <TargetFrameworks>net48;net8.0-windows;net9.0-windows;net10.0-windows</TargetFrameworks>
     <UseWpf>true</UseWpf>
-    <VersionPrefix>1.5.0</VersionPrefix>
+    <Product>VncLib.Wpf</Product>
+    <PackageId>VncLib.Wpf</PackageId>
+    <Title>VncLib.Wpf</Title>
+    <Description>WPF control for VncLib — renders a remote VNC screen and forwards keyboard/mouse input. Depends on the UI-neutral VncLib core.</Description>
+    <PackageTags>vnc;rfb;remote-desktop;wpf;control</PackageTags>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\VncLib\VncLib.csproj">
-      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
-      <IncludeAssets>VncLib.dll</IncludeAssets>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="System.Drawing.Common" Version="7.0.0" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
+    <ProjectReference Include="..\VncLib\VncLib.csproj" />
   </ItemGroup>
 </Project>

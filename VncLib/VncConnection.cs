@@ -1,41 +1,36 @@
-﻿using System;
+// Copyright 2017 The VncLib Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Drawing;
-using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Threading;
 using VncLib.VncCommands;
 using Timer = System.Timers.Timer;
 
 namespace VncLib
 {
+    /// <summary>
+    /// UI-framework neutral façade around <see cref="RfbClient"/>.
+    /// It maintains a raw BGR32 framebuffer composed from the server's screen updates
+    /// and raises <see cref="FrameArrived"/> whenever it changes, so any UI toolkit
+    /// (WPF, Avalonia, headless) can render the remote screen without this library
+    /// depending on a specific presentation framework.
+    /// </summary>
     public class VncConnection
     {
         public delegate void UpdateScreenCallback(ScreenUpdateEventArgs newScreen);
 
-        private readonly List<Key> _nonSpecialKeys = new List<Key>(); //A List of all Keys, that are handled by the transparent Textbox
-
-        public readonly DispatcherTimer TmrClipboardCheck;
-
-        public readonly DispatcherTimer TmrEllipse;
         public readonly Timer TmrScreen;
-        private WriteableBitmap _bitmap;
+
         private RfbClient _connection;
 
         private readonly object _lockObj = new object();
-        //private bool _ignoreNextKey;
-        //private byte[] _screenData;
-        private Bitmap _screen;
-        private int _lastClipboardHash; //To check, if the text has changed
-        private DateTime _lastMouseMove = DateTime.Now;
 
-        //DateTime _lastUpdate = DateTime.MinValue;
+        private byte[] _framebuffer;
+        private int _framebufferWidth;
+        private int _framebufferHeight;
 
         private VncLibUserCallback _vncLibUserCallback;
         private VncCommandPlayerCommandExecuted _commandExecuted;
@@ -44,17 +39,6 @@ namespace VncLib
         public VncConnection()
         {
             ServerPort = 5900;
-            CreateSpecialKeys();
-
-            TmrEllipse = new DispatcherTimer();
-            TmrEllipse.Interval = TimeSpan.FromMilliseconds(200);
-            TmrEllipse.Tick += tmrEllipse_Tick;
-
-            //TODO
-            //TmrClipboardCheck = new DispatcherTimer();
-            //TmrClipboardCheck.Interval = TimeSpan.FromMilliseconds(500);
-            //TmrClipboardCheck.Tick += tmrClipboard_Tick;
-            //TmrClipboardCheck.IsEnabled = true;
 
             TmrScreen = new Timer(UpdateInterval);
             TmrScreen.Elapsed += tmrScreen_Tick;
@@ -97,18 +81,38 @@ namespace VncLib
             set => _previewCommandExecute = value;
         }
 
-        public Bitmap Screenshot
-        {
-            get
-            {
-                if(_connection == null)
-                    throw new InvalidOperationException("Can't get a screenshot without a connection");
+        /// <summary>
+        /// Width of the current framebuffer in pixels, or 0 before the first update.
+        /// </summary>
+        public int FramebufferWidth => _framebufferWidth;
 
-                if (_screen == null)
+        /// <summary>
+        /// Height of the current framebuffer in pixels, or 0 before the first update.
+        /// </summary>
+        public int FramebufferHeight => _framebufferHeight;
+
+        /// <summary>
+        /// Raised on the background thread after the framebuffer has been updated with
+        /// new screen data. Consumers should copy the framebuffer via <see cref="GetFramebuffer"/>
+        /// and marshal to their UI thread as needed.
+        /// </summary>
+        public event EventHandler FrameArrived;
+
+        /// <summary>
+        /// Returns a copy of the current framebuffer as raw BGR32 (4 bytes per pixel,
+        /// blue/green/red/unused) with a stride of <see cref="FramebufferWidth"/> * 4,
+        /// or <c>null</c> if no screen data has been received yet.
+        /// </summary>
+        public byte[] GetFramebuffer()
+        {
+            lock (_lockObj)
+            {
+                if (_framebuffer == null)
                     return null;
 
-                Bitmap bmp = _screen;
-                return new Bitmap(bmp);
+                var copy = new byte[_framebuffer.Length];
+                Array.Copy(_framebuffer, copy, _framebuffer.Length);
+                return copy;
             }
         }
 
@@ -133,17 +137,11 @@ namespace VncLib
         /// Should the interval of sending MouseMoveCommands to the VNC-Server be limited? Default=true
         /// </summary>
         public bool LimitMouseEvents { get; set; } = true;
-        
 
         void tmrScreen_Tick(object sender, EventArgs e)
         {
-            if(AutoUpdate)
+            if (AutoUpdate)
                 _connection?.RefreshScreen();
-        }
-
-        void tmrEllipse_Tick(object sender, EventArgs e)
-        {
-            TmrEllipse.Stop();
         }
 
         private void ConnectInternal(string serverAddress, int serverPort, string serverPassword)
@@ -153,12 +151,10 @@ namespace VncLib
 
             //Is Triggered when the Screen is beeing updated
             _connection.ScreenUpdate += new RfbClient.ScreenUpdateEventHandler(Connection_ScreenUpdate);
-            //Is Triggered, when the RfbClient sends a Log-Event
-            //_connection.LogMessage += new RfbClient.LogMessageEventHandler(Connection_LogMessage);
 
             _connection.StartConnection();
 
-            if(AutoUpdate)
+            if (AutoUpdate)
                 TmrScreen.Enabled = true;
         }
 
@@ -168,71 +164,61 @@ namespace VncLib
             {
                 lock (_lockObj)
                 {
-                    UpdateImage(e);
+                    UpdateFramebuffer(e);
                 }
+
+                FrameArrived?.Invoke(this, EventArgs.Empty);
             }
         }
 
         /// <summary>
-        /// Update the RemoteImage
+        /// Compose the incoming rectangles into the raw BGR32 framebuffer.
         /// </summary>
-        /// <param name="newScreens"></param>
-        private void UpdateImage(ScreenUpdateEventArgs newScreens)
+        private void UpdateFramebuffer(ScreenUpdateEventArgs newScreens)
         {
-            try
-            {
-                if (newScreens.Rects.Count == 0)
-                    return;
-                //_lastUpdate = DateTime.Now;
-                
-                if (_bitmap == null)
-                {
-                    _bitmap = new WriteableBitmap(newScreens.Rects.First().Width, newScreens.Rects.First().Height, 96,
-                        96, PixelFormats.Bgr32, null);
-                    
-                }
-                
-                foreach (var newScreen in newScreens.Rects)
-                {
-                    _bitmap.WritePixels(new Int32Rect(0, 0, newScreen.Width, newScreen.Height), newScreen.PixelData,
-                        newScreen.Width * 4, newScreen.PosX, newScreen.PosY);
-                }
-                
-                _screen = BitmapFromWriteableBitmap(_bitmap);
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine(e.ToString());
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// Checkinterval to check, if the Clipboard changed. Not a stylish way, but it works
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        void tmrClipboard_Tick(object sender, EventArgs e)
-        {
-            if (_connection == null)
+            if (newScreens.Rects == null || newScreens.Rects.Count == 0)
                 return;
 
-            if (Clipboard.ContainsText()) //Check if Clipboard contains Text
+            var first = newScreens.Rects[0];
+
+            if (_framebuffer == null)
             {
-                try
+                _framebufferWidth = first.Width;
+                _framebufferHeight = first.Height;
+                _framebuffer = new byte[_framebufferWidth * _framebufferHeight * 4];
+            }
+
+            foreach (var rect in newScreens.Rects)
+            {
+                if (rect.PixelData == null)
+                    continue;
+
+                var rowBytes = rect.Width * 4;
+                var maxRowBytes = (_framebufferWidth - rect.PosX) * 4;
+                if (maxRowBytes <= 0)
+                    continue;
+
+                for (var y = 0; y < rect.Height; y++)
                 {
-                    if (Clipboard.GetText().Length < Int32.MaxValue) //normally it should be UInt32.MaxValue, but this is larger then .Length ever can be. So 2.1Million signs are maximum
-                    {
-                        if (_lastClipboardHash != Clipboard.GetText().GetHashCode()
-                        ) //If the Text has changed since last check
-                        {
-                            //_Connection.SendClientCutText(Clipboard.GetText());
-                            _lastClipboardHash = Clipboard.GetText().GetHashCode(); //Set the new Hash
-                        }
-                    }
-                }
-                catch (Exception) //
-                {
+                    var destY = rect.PosY + y;
+                    if (destY < 0 || destY >= _framebufferHeight)
+                        continue;
+
+                    var srcOffset = y * rowBytes;
+                    if (srcOffset >= rect.PixelData.Length)
+                        break;
+
+                    var destOffset = (destY * _framebufferWidth + rect.PosX) * 4;
+
+                    var copyLen = rowBytes;
+                    if (copyLen > maxRowBytes)
+                        copyLen = maxRowBytes;
+                    if (srcOffset + copyLen > rect.PixelData.Length)
+                        copyLen = rect.PixelData.Length - srcOffset;
+                    if (copyLen <= 0)
+                        continue;
+
+                    Array.Copy(rect.PixelData, srcOffset, _framebuffer, destOffset, copyLen);
                 }
             }
         }
@@ -265,8 +251,6 @@ namespace VncLib
         public void Disconnect()
         {
             TmrScreen?.Stop();
-            TmrEllipse?.Stop();
-            TmrClipboardCheck?.Stop();
             _connection?.Disconnect();
         }
 
@@ -275,93 +259,9 @@ namespace VncLib
             _connection.RefreshScreen();
         }
 
-
         public async Task PlayCommands(IEnumerable<IVncCommand> commands)
         {
             await _connection.Play(commands, PreviewCommandExecute, CommandExecuted);
-        }
-
-        private void CreateSpecialKeys()
-        {
-            _nonSpecialKeys.Add(Key.A);
-            _nonSpecialKeys.Add(Key.B);
-            _nonSpecialKeys.Add(Key.C);
-            _nonSpecialKeys.Add(Key.D);
-            _nonSpecialKeys.Add(Key.E);
-            _nonSpecialKeys.Add(Key.F);
-            _nonSpecialKeys.Add(Key.G);
-            _nonSpecialKeys.Add(Key.H);
-            _nonSpecialKeys.Add(Key.I);
-            _nonSpecialKeys.Add(Key.J);
-            _nonSpecialKeys.Add(Key.K);
-            _nonSpecialKeys.Add(Key.L);
-            _nonSpecialKeys.Add(Key.M);
-            _nonSpecialKeys.Add(Key.N);
-            _nonSpecialKeys.Add(Key.O);
-            _nonSpecialKeys.Add(Key.P);
-            _nonSpecialKeys.Add(Key.Q);
-            _nonSpecialKeys.Add(Key.R);
-            _nonSpecialKeys.Add(Key.S);
-            _nonSpecialKeys.Add(Key.T);
-            _nonSpecialKeys.Add(Key.U);
-            _nonSpecialKeys.Add(Key.V);
-            _nonSpecialKeys.Add(Key.W);
-            _nonSpecialKeys.Add(Key.X);
-            _nonSpecialKeys.Add(Key.Y);
-            _nonSpecialKeys.Add(Key.Z);
-
-            _nonSpecialKeys.Add(Key.D0);
-            _nonSpecialKeys.Add(Key.D1);
-            _nonSpecialKeys.Add(Key.D2);
-            _nonSpecialKeys.Add(Key.D3);
-            _nonSpecialKeys.Add(Key.D4);
-            _nonSpecialKeys.Add(Key.D5);
-            _nonSpecialKeys.Add(Key.D6);
-            _nonSpecialKeys.Add(Key.D7);
-            _nonSpecialKeys.Add(Key.D8);
-            _nonSpecialKeys.Add(Key.D9);
-
-            _nonSpecialKeys.Add(Key.Add);
-            _nonSpecialKeys.Add(Key.Decimal);
-            _nonSpecialKeys.Add(Key.Divide);
-            _nonSpecialKeys.Add(Key.Multiply);
-            _nonSpecialKeys.Add(Key.OemBackslash);
-            _nonSpecialKeys.Add(Key.OemCloseBrackets);
-            _nonSpecialKeys.Add(Key.OemComma);
-            _nonSpecialKeys.Add(Key.OemMinus);
-            _nonSpecialKeys.Add(Key.OemOpenBrackets);
-            _nonSpecialKeys.Add(Key.OemPeriod);
-            _nonSpecialKeys.Add(Key.OemPipe);
-            _nonSpecialKeys.Add(Key.OemPlus);
-            _nonSpecialKeys.Add(Key.OemQuestion);
-            _nonSpecialKeys.Add(Key.OemQuotes);
-            _nonSpecialKeys.Add(Key.OemSemicolon);
-            _nonSpecialKeys.Add(Key.OemTilde);
-
-            _nonSpecialKeys.Add(Key.NumPad0);
-            _nonSpecialKeys.Add(Key.NumPad1);
-            _nonSpecialKeys.Add(Key.NumPad2);
-            _nonSpecialKeys.Add(Key.NumPad3);
-            _nonSpecialKeys.Add(Key.NumPad4);
-            _nonSpecialKeys.Add(Key.NumPad5);
-            _nonSpecialKeys.Add(Key.NumPad6);
-            _nonSpecialKeys.Add(Key.NumPad7);
-            _nonSpecialKeys.Add(Key.NumPad8);
-            _nonSpecialKeys.Add(Key.NumPad9);
-        }
-
-        private System.Drawing.Bitmap BitmapFromWriteableBitmap(WriteableBitmap writeBmp)
-        {
-            System.Drawing.Bitmap bmp;
-            using (MemoryStream outStream = new MemoryStream())
-            {
-                BitmapEncoder enc = new BmpBitmapEncoder();
-                enc.Frames.Add(BitmapFrame.Create((BitmapSource)writeBmp));
-                enc.Save(outStream);
-                var bmp2 = new System.Drawing.Bitmap(outStream);
-                bmp = new Bitmap(bmp2);
-            }
-            return bmp;
         }
     }
 }

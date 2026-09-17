@@ -1,9 +1,9 @@
 ﻿using System;
+using VncLib;
 using System.IO;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Drawing;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -121,21 +121,11 @@ namespace VncLib.Wpf
             set => _previewCommandExecute = value;
         }
 
-        public Bitmap Screenshot
-        {
-            get
-            {
-                Bitmap bmp;
-                using (var ms = new MemoryStream())
-                {
-                    BitmapEncoder enc = new BmpBitmapEncoder();
-                    enc.Frames.Add(BitmapFrame.Create(_bitmap.Clone()));
-                    enc.Save(ms);
-                    bmp = new Bitmap(ms);
-                }
-                return new Bitmap(bmp);
-            }
-        }
+        /// <summary>
+        /// A snapshot of the current remote screen as a WPF <see cref="BitmapSource"/>,
+        /// or <c>null</c> if no frame has been received yet.
+        /// </summary>
+        public BitmapSource Screenshot => _bitmap?.Clone();
 
         public ObservableCollection<IVncCommand> ExecutedCommands => _connection.ExecutedCommands;
 
@@ -329,7 +319,7 @@ namespace VncLib.Wpf
                 //if (Keyboard.IsKeyDown(Key.LeftCtrl))
                 //    _ignoreNextKey = true;
 
-                _connection.SendKey(e);
+                _connection.SendKey(WpfKeyMap.ToVncKey(e.Key), e.IsDown);
             }
         }
 
@@ -347,7 +337,7 @@ namespace VncLib.Wpf
                 //if (Keyboard.IsKeyDown(Key.LeftCtrl))
                 //    _ignoreNextKey = true;
 
-                _connection.SendKey(e);
+                _connection.SendKey(WpfKeyMap.ToVncKey(e.Key), e.IsDown);
             }
         }
 
@@ -440,7 +430,7 @@ namespace VncLib.Wpf
                            _connection.Properties.FramebufferHeight + 1;
 
                 //call a callback method so the user can get the mouseposition
-                VncLibUserCallback?.Invoke(e, xPos, yPos);
+                VncLibUserCallback?.Invoke(new VncPointerEventArgs(e.LeftButton == MouseButtonState.Pressed, e.MiddleButton == MouseButtonState.Pressed, e.RightButton == MouseButtonState.Pressed), xPos, yPos);
 
                 _connection.SendMouseClick((UInt16)xPos, (UInt16)yPos, buttonValue);
             }

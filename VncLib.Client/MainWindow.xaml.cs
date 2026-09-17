@@ -5,7 +5,7 @@
 using System;
 using System.ComponentModel;
 using System.Windows;
-using System.Windows.Input;
+using VncLib;
 
 namespace VncLib.Client
 {
@@ -28,7 +28,7 @@ namespace VncLib.Client
             VncLibControl.EnableMouseCapturing();
         }
 
-        private void VncLibUserCallback(MouseEventArgs mouseEventArgs, double x, double y)
+        private void VncLibUserCallback(VncPointerEventArgs e, double x, double y)
         {
             Console.WriteLine($@"X: {x} Y: {y}");
         }

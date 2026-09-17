@@ -3,13 +3,12 @@
 // license that can be found in the LICENSE file.
 
 using System;
-using System.Windows.Input;
 
 namespace VncLib.VncCommands
 {
     public interface IRfbClient
     {
-        void SendKey(KeyEventArgs e);
+        void SendKey(VncKey key, bool isDown);
 
         void SendMouseClick(UInt16 posX, UInt16 posY, byte button);
     }

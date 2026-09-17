@@ -12,9 +12,6 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
 using VncLib.VncCommands;
 
 namespace VncLib
@@ -47,7 +44,8 @@ namespace VncLib
 
         private int _backBuffer2RawStride; //How many Bytes a Row have
         //public byte[] _BackBuffer2PixelData; //The Backbuffer as a Bytearray
-        private System.Windows.Media.PixelFormat _backBuffer2PixelFormat = PixelFormats.Rgb24; //The Pixelformat of the Backbuffer
+        private int _backBuffer2PixelBpp = 24; //The bits per pixel of the Backbuffer
+        private bool _shiftDown; //Tracks the shift modifier for resolving printable keys
 
         private IVncCommand _currentCommand;
         private ObservableCollection<IVncCommand> _executedCommands;
@@ -1482,7 +1480,7 @@ namespace VncLib
         public event ScreenUpdateEventHandler ScreenUpdate;
 
         public delegate void ServerCutTextEventHandler(object sender, ServerCutTextEventArgs e);
-        //public event ServerCutTextEventHandler ServerCutText;
+        public event ServerCutTextEventHandler ServerCutText;
 
         /// <summary>
         /// Start the Connection to the VNC-Server
@@ -1812,7 +1810,7 @@ namespace VncLib
                 Properties.FramebufferHeight = ReadUInt16();
 
                 //Set how many byte a Row have
-                _backBuffer2RawStride = (Properties.FramebufferWidth * _backBuffer2PixelFormat.BitsPerPixel + 7) / 8;
+                _backBuffer2RawStride = (Properties.FramebufferWidth * _backBuffer2PixelBpp + 7) / 8;
 
                 //Initialize the Backend-Backbuffer with the correct size
                 //_BackBuffer2PixelData = new byte[_BackBuffer2RawStride * Properties.FramebufferHeight];
@@ -2031,38 +2029,9 @@ namespace VncLib
 
             var cacheText = System.Text.Encoding.ASCII.GetString(recData);
 
-            //TODO
-            //if (ServerCutText != null)
-            //{
-            //    var sct = new ServerCutTextEventArgs(cacheText);
-            //}
-
             Log(Logtype.Debug, "New ServerCutText received. Text: " + cacheText);
 
-            //Call Helperthread with STA to set the Clipboard-Text
-            var cacheSetterThread = new Thread(CacheSetter);
-            cacheSetterThread.SetApartmentState(ApartmentState.STA);
-            cacheSetterThread.Start((object)cacheText);
-
-            //Clipboard.SetText(cacheText);
-        }
-
-        /// <summary>
-        /// Helper Thread with ApartmentState.STA for setting the local clipboard
-        /// </summary>
-        /// <param name="cacheText"></param>
-        public void CacheSetter(object cacheText)
-        {
-            try
-            {
-                //UGLY
-                //Always fails... Some people say it is a bug in the WPF Clipboard handler. This works anyway but always results in an exception too. This should be changed somewhen.
-                Clipboard.SetText(cacheText.ToString());
-            }
-            catch (Exception)
-            {
-                //Happens every time
-            }
+            ServerCutText?.Invoke(this, new ServerCutTextEventArgs(cacheText));
         }
 
         /// <summary>
@@ -2136,23 +2105,17 @@ namespace VncLib
         }
 
         /// <summary>
-        /// Sends a KeyEvent to the Server (see 6.4.4)
-        /// </summary>
-        /// <param name="pressedKey">The pressed Character</param>
-        /// <param name="isKeyDown">Is the Key currently pressed</param>
-        private void SendKeyEvent(KeyEventArgs e)
-        {
-            SendKeyEvent(e.Key, e.IsDown);
-        }
-
-        /// <summary>
         /// Send a Key in pressed or released state (see http://www.cl.cam.ac.uk/~mgk25/ucs/keysymdef.h)
         /// </summary>
         /// <param name="e"></param>
         /// <param name="isDown"></param>
-        private void SendKeyEvent(Key e, bool isDown)
+        private void SendKeyEvent(VncKey e, bool isDown)
         {
             if (_isConnected == false) return;
+
+            //Track the shift modifier so printable keys resolve without a UI framework
+            if (e == VncKey.LeftShift || e == VncKey.RightShift)
+                _shiftDown = isDown;
 
             Log(Logtype.Debug, "Sending Key: " + e.ToString());
 
@@ -2165,7 +2128,7 @@ namespace VncLib
             if (keyCode == 0) //Was not a Special Sign
             {
                 //Get the Keycode
-                var key = KeyInterop.VirtualKeyFromKey(e);
+                var key = VncKeyInterop.VirtualKeyFromKey(e);
 
                 //Get the related Char
                 var enteredChar = System.Text.Encoding.ASCII.GetChars(Helper.ConvertToByteArray(key, true))[0];
@@ -2178,14 +2141,14 @@ namespace VncLib
 
                 if (rgExAz.IsMatch(enteredChar.ToString())) //If it should be a small letter
                 {
-                    if (Keyboard.Modifiers != ModifierKeys.Shift)
+                    if (!_shiftDown)
                     {
                         key += 32;
                         enteredChar = System.Text.Encoding.ASCII.GetChars(Helper.ConvertToByteArray(key, true))[0];
                     }
                 }
 
-                else if (rgEx09.IsMatch(enteredChar.ToString()) && Keyboard.Modifiers != ModifierKeys.Shift) //It is a number
+                else if (rgEx09.IsMatch(enteredChar.ToString()) && !_shiftDown) //It is a number
                 {
                     //Do nothing
                 }
@@ -2210,155 +2173,154 @@ namespace VncLib
             _dataStream.Write(data, 0, data.Length);
         }
 
-        private uint GetKeyCode(Key e)
+        private uint GetKeyCode(VncKey e)
         {
             uint keyCode = 0x00;
             switch (e)
             {
-                case Key.LeftShift:
+                case VncKey.LeftShift:
                     keyCode = 0x0000ffe1;
                     break;
 
-                case Key.Space:
+                case VncKey.Space:
                     keyCode = 0x00000020;
                     break;
-                case Key.Tab:
+                case VncKey.Tab:
                     keyCode = 0x0000FF09;
                     break;
-                case Key.Enter:
+                case VncKey.Enter:
                     keyCode = 0x0000FF0D;
                     break;
-                case Key.Escape:
+                case VncKey.Escape:
                     keyCode = 0x0000FF1B;
                     break;
-                case Key.Home:
+                case VncKey.Home:
                     keyCode = 0x0000FF50;
                     break;
-                case Key.Left:
+                case VncKey.Left:
                     keyCode = 0x0000FF51;
                     break;
-                case Key.Up:
+                case VncKey.Up:
                     keyCode = 0x0000FF52;
                     break;
-                case Key.Right:
+                case VncKey.Right:
                     keyCode = 0x0000FF53;
                     break;
-                case Key.Down:
+                case VncKey.Down:
                     keyCode = 0x0000FF54;
                     break;
-                case Key.PageUp:
+                case VncKey.PageUp:
                     keyCode = 0x0000FF55;
                     break;
-                case Key.PageDown:
-                    //case Key.Next:
+                case VncKey.PageDown:
                     keyCode = 0x0000FF56;
                     break;
-                case Key.End:
+                case VncKey.End:
                     keyCode = 0x0000FF57;
                     break;
-                case Key.Insert:
+                case VncKey.Insert:
                     keyCode = 0x0000FF63;
                     break;
-                case Key.Delete:
+                case VncKey.Delete:
                     keyCode = 0x0000FFFF;
                     break;
 
-                case Key.CapsLock:
+                case VncKey.CapsLock:
                     keyCode = 0x0000FFE5;
                     break;
-                case Key.LeftAlt:
+                case VncKey.LeftAlt:
                     keyCode = 0x0000FFE9;
                     break;
-                case Key.RightAlt:
+                case VncKey.RightAlt:
                     keyCode = 0x0000FFEA;
                     break;
-                case Key.LeftCtrl:
+                case VncKey.LeftCtrl:
                     keyCode = 0x0000FFE3;
                     break;
-                case Key.RightCtrl:
+                case VncKey.RightCtrl:
                     keyCode = 0x0000FFE4;
                     break;
-                case Key.LWin:
+                case VncKey.LWin:
                     keyCode = 0x0000FFEB;
                     break;
-                case Key.RWin:
+                case VncKey.RWin:
                     keyCode = 0x0000FFEC;
                     break;
-                case Key.Apps:
+                case VncKey.Apps:
                     keyCode = 0x0000FFEE;
                     break;
 
-                case Key.F1:
+                case VncKey.F1:
                     keyCode = 0x0000FFBE;
                     break;
-                case Key.F2:
+                case VncKey.F2:
                     keyCode = 0x0000FFBF;
                     break;
-                case Key.F3:
+                case VncKey.F3:
                     keyCode = 0x0000FFC0;
                     break;
-                case Key.F4:
+                case VncKey.F4:
                     keyCode = 0x0000FFC1;
                     break;
-                case Key.F5:
+                case VncKey.F5:
                     keyCode = 0x0000FFC2;
                     break;
-                case Key.F6:
+                case VncKey.F6:
                     keyCode = 0x0000FFC3;
                     break;
-                case Key.F7:
+                case VncKey.F7:
                     keyCode = 0x0000FFC4;
                     break;
-                case Key.F8:
+                case VncKey.F8:
                     keyCode = 0x0000FFC5;
                     break;
-                case Key.F9:
+                case VncKey.F9:
                     keyCode = 0x0000FFC6;
                     break;
-                case Key.F10:
+                case VncKey.F10:
                     keyCode = 0x0000FFC7;
                     break;
-                case Key.F11:
+                case VncKey.F11:
                     keyCode = 0x0000FFC8;
                     break;
-                case Key.F12:
+                case VncKey.F12:
                     keyCode = 0x0000FFC9;
                     break;
 
-                case Key.NumLock:
+                case VncKey.NumLock:
                     keyCode = 0x0000FF7F;
                     break;
-                case Key.NumPad0:
+                case VncKey.NumPad0:
                     keyCode = 0x0000FFB0;
                     break;
-                case Key.NumPad1:
+                case VncKey.NumPad1:
                     keyCode = 0x0000FFB1;
                     break;
-                case Key.NumPad2:
+                case VncKey.NumPad2:
                     keyCode = 0x0000FFB2;
                     break;
-                case Key.NumPad3:
+                case VncKey.NumPad3:
                     keyCode = 0x0000FFB3;
                     break;
-                case Key.NumPad4:
+                case VncKey.NumPad4:
                     keyCode = 0x0000FFB4;
                     break;
-                case Key.NumPad5:
+                case VncKey.NumPad5:
                     keyCode = 0x0000FFB5;
                     break;
-                case Key.NumPad6:
+                case VncKey.NumPad6:
                     keyCode = 0x0000FFB6;
                     break;
-                case Key.NumPad7:
+                case VncKey.NumPad7:
                     keyCode = 0x0000FFB7;
                     break;
-                case Key.NumPad8:
+                case VncKey.NumPad8:
                     keyCode = 0x0000FFB8;
                     break;
-                case Key.NumPad9:
+                case VncKey.NumPad9:
                     keyCode = 0x0000FFB9;
                     break;
-                
+
             }
             return keyCode;
         }
@@ -2744,9 +2706,9 @@ namespace VncLib
         /// Send a pressed Key to the Server (i.e. Enter, Tab, Cntr, Alt etc.)
         /// </summary>
         /// <param name="e"></param>
-        public void SendKey(KeyEventArgs e)
+        public void SendKey(VncKey key, bool isDown)
         {
-            SendKeyEvent(e);
+            SendKeyEvent(key, isDown);
         }
 
         /// <summary>
@@ -2785,56 +2747,56 @@ namespace VncLib
         /// <param name="keyComb"></param>
         public void SendKeyCombination(KeyCombination keyComb)
         {
-            var aKey1 = default(Key);
-            var aKey2 = default(Key);
-            var aKey3 = default(Key);
+            var aKey1 = default(VncKey);
+            var aKey2 = default(VncKey);
+            var aKey3 = default(VncKey);
 
             switch (keyComb)
             {
                 case KeyCombination.AltF4:
-                    aKey1 = Key.LeftAlt;
-                    aKey2 = Key.F4;
+                    aKey1 = VncKey.LeftAlt;
+                    aKey2 = VncKey.F4;
                     break;
                 case KeyCombination.AltTab:
-                    aKey1 = Key.LeftAlt;
-                    aKey2 = Key.Tab;
+                    aKey1 = VncKey.LeftAlt;
+                    aKey2 = VncKey.Tab;
                     break;
                 case KeyCombination.CapsLock:
-                    aKey1 = Key.CapsLock;
+                    aKey1 = VncKey.CapsLock;
                     break;
                 case KeyCombination.CtrlAltDel:
-                    aKey1 = Key.LeftCtrl;
-                    aKey2 = Key.LeftAlt;
-                    aKey3 = Key.Delete;
+                    aKey1 = VncKey.LeftCtrl;
+                    aKey2 = VncKey.LeftAlt;
+                    aKey3 = VncKey.Delete;
                     break;
                 case KeyCombination.CtrlAltEnd:
-                    aKey1 = Key.LeftCtrl;
-                    aKey2 = Key.LeftAlt;
-                    aKey3 = Key.End;
+                    aKey1 = VncKey.LeftCtrl;
+                    aKey2 = VncKey.LeftAlt;
+                    aKey3 = VncKey.End;
                     break;
                 case KeyCombination.CtrlEsc:
-                    aKey1 = Key.LeftCtrl;
-                    aKey2 = Key.Escape;
+                    aKey1 = VncKey.LeftCtrl;
+                    aKey2 = VncKey.Escape;
                     break;
                 case KeyCombination.NumLock:
-                    aKey1 = Key.NumLock;
+                    aKey1 = VncKey.NumLock;
                     break;
                 case KeyCombination.Print:
-                    aKey1 = Key.PrintScreen;
+                    aKey1 = VncKey.PrintScreen;
                     break;
                 case KeyCombination.Scroll:
-                    aKey1 = Key.Scroll;
+                    aKey1 = VncKey.Scroll;
                     break;
             }
 
             SendKeyEvent(aKey1, true);
-            if (aKey2 != default(Key)) SendKeyEvent(aKey2, true);
-            if (aKey3 != default(Key)) SendKeyEvent(aKey3, true);
+            if (aKey2 != default(VncKey)) SendKeyEvent(aKey2, true);
+            if (aKey3 != default(VncKey)) SendKeyEvent(aKey3, true);
 
             Thread.Sleep(100);
 
-            if (aKey3 != default(Key)) SendKeyEvent(aKey3, false);
-            if (aKey2 != default(Key)) SendKeyEvent(aKey2, false);
+            if (aKey3 != default(VncKey)) SendKeyEvent(aKey3, false);
+            if (aKey2 != default(VncKey)) SendKeyEvent(aKey2, false);
             SendKeyEvent(aKey1, false);
         }
 
