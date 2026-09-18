@@ -2705,7 +2705,8 @@ namespace VncLib
         /// <summary>
         /// Send a pressed Key to the Server (i.e. Enter, Tab, Cntr, Alt etc.)
         /// </summary>
-        /// <param name="e"></param>
+        /// <param name="key">The key to send.</param>
+        /// <param name="isDown">True when the key is pressed; false when released.</param>
         public void SendKey(VncKey key, bool isDown)
         {
             SendKeyEvent(key, isDown);
